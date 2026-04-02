@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/src/assets/brand-mark.svg" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0"
+    />
+    <title>进程查杀</title>
+    <script>
+      (() => {
+        try {
+          const raw = localStorage.getItem('process-query.preferences.v1');
+
+          if (!raw) {
+            return;
+          }
+
+          const parsed = JSON.parse(raw);
+          const root = document.documentElement;
+
+          if (parsed?.themeMode === 'light' || parsed?.themeMode === 'dark') {
+            root.dataset.theme = parsed.themeMode;
+          }
+
+          if (
+            parsed?.accentPreset === 'iceblue' ||
+            parsed?.accentPreset === 'emerald' ||
+            parsed?.accentPreset === 'sunset' ||
+            parsed?.accentPreset === 'violet'
+          ) {
+            root.dataset.accent = parsed.accentPreset;
+          }
+        } catch (error) {
+          console.warn('Failed to restore process-query appearance settings.', error);
+        }
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
