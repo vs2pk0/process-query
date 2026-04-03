@@ -1,9 +1,9 @@
 {
   "name": "process-query",
-  "productName": "进程查杀",
+  "productName": "Mac小工具",
   "version": "0.1.0",
   "private": true,
-  "description": "进程查杀：一个用于查询端口占用并结束进程的 macOS 桌面小工具。",
+  "description": "Mac小工具：收纳常用 macOS 修复动作的桌面工具集。",
   "main": "dist-electron/electron/main.js",
   "scripts": {
     "dev": "npm run build:electron && concurrently -k \"npm:dev:renderer\" \"npm:dev:electron\"",
@@ -35,8 +35,8 @@
     "wait-on": "^9.0.4"
   },
   "build": {
-    "appId": "com.dalong.process-query",
-    "productName": "进程查杀",
+    "appId": "com.dalong.mac-mini-tools",
+    "productName": "Mac小工具",
     "asar": true,
     "directories": {
       "output": "release",

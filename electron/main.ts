@@ -2,11 +2,12 @@ import { app, BrowserWindow, ipcMain, nativeImage } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
 
-import type { KillSignal, ThemeMode } from '../shared/process';
+import type { KillSignal, NetworkAction, RunNetworkActionOptions, ThemeMode } from '../shared/process';
+import { repairAppSignature, runNetworkAction, selectApplicationPath } from './mac-utility-service';
 import { findProcessesByPort, killProcessByPid } from './process-service';
 
 const isMac = process.platform === 'darwin';
-const appName = '进程查杀';
+const appName = 'Mac小工具';
 const DEFAULT_WINDOW_SIZE = {
   width: 1120,
   height: 760,
@@ -67,6 +68,23 @@ app.whenReady().then(() => {
   ipcMain.handle('process:lookup', async (_event, port: number) => findProcessesByPort(port));
   ipcMain.handle('process:kill', async (_event, pid: number, signal?: KillSignal) =>
     killProcessByPid(pid, signal),
+  );
+  ipcMain.handle('tools:select-application', async (event) => {
+    const window = BrowserWindow.fromWebContents(event.sender);
+
+    if (!window) {
+      throw new Error('当前没有可用窗口，无法打开文件选择器。');
+    }
+
+    return selectApplicationPath(window);
+  });
+  ipcMain.handle('tools:repair-app-signature', async (_event, targetPath: string) =>
+    repairAppSignature(targetPath),
+  );
+  ipcMain.handle(
+    'tools:run-network-action',
+    async (_event, action: NetworkAction, options?: RunNetworkActionOptions) =>
+      runNetworkAction(action, options),
   );
   ipcMain.handle('window:set-theme', async (event, themeMode: ThemeMode) => {
     const window = BrowserWindow.fromWebContents(event.sender);

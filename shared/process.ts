@@ -2,6 +2,7 @@ export type PortProtocol = 'TCP' | 'UDP';
 export type PortOccupancyProtocol = PortProtocol | 'OTHER';
 export type KillSignal = 'SIGTERM' | 'SIGKILL';
 export type ThemeMode = 'light' | 'dark';
+export type NetworkAction = 'flushDns' | 'renewDhcp' | 'restartWifi' | 'deepResetNetwork';
 
 export interface PortProcess {
   pid: number;
@@ -38,9 +39,38 @@ export interface KillProcessResult {
   success: boolean;
 }
 
+export interface RepairAppSignatureResult {
+  path: string;
+  command: string;
+  success: boolean;
+  repairedAt: string;
+}
+
+export interface RunNetworkActionOptions {
+  interfaceName?: string;
+  serviceName?: string;
+}
+
+export interface NetworkActionResult {
+  action: NetworkAction;
+  command: string;
+  success: boolean;
+  executedAt: string;
+  summary: string;
+  restartRecommended: boolean;
+  interfaceName?: string;
+  serviceName?: string;
+}
+
 export interface ProcessToolApi {
   lookupPort: (port: number) => Promise<LookupPortResult>;
   killProcess: (pid: number, signal?: KillSignal) => Promise<KillProcessResult>;
+  selectApplicationPath: () => Promise<string | null>;
+  repairAppSignature: (targetPath: string) => Promise<RepairAppSignatureResult>;
+  runNetworkAction: (
+    action: NetworkAction,
+    options?: RunNetworkActionOptions,
+  ) => Promise<NetworkActionResult>;
   setWindowTheme: (themeMode: ThemeMode) => Promise<void>;
 }
 
