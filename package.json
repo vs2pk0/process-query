@@ -15,7 +15,8 @@
     "build:icons": "node ./scripts/build-mac-icon.mjs",
     "preview": "vite preview",
     "start": "npm run build && electron .",
-    "dist:mac": "npm run build && npm run build:icons && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac dmg zip --arm64"
+    "dist:mac": "npm run build && npm run build:icons && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac dmg zip --arm64",
+    "dist:mac:ci": "npm run build && npm run build:icons && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --publish never --mac dmg zip --arm64"
   },
   "dependencies": {
     "react": "^19.2.4",

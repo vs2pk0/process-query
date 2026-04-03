@@ -49,7 +49,7 @@ jobs:
         run: npm ci
 
       - name: Package macOS App
-        run: npm run dist:mac
+        run: npm run dist:mac:ci
 
       - name: Upload macOS Artifacts
         uses: actions/upload-artifact@v6
