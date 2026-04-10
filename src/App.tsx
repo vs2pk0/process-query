@@ -6,6 +6,8 @@ import type {
   LookupPortResult,
   NetworkAction,
   NetworkActionResult,
+  NodeModulesUsageEntry,
+  NodeModulesUsageResult,
   PortOccupancyDetail,
   PortProcess,
   RepairAppSignatureResult,
@@ -16,7 +18,7 @@ import brandMark from './assets/brand-mark.svg';
 
 type BannerTone = 'neutral' | 'success' | 'error';
 type ViewMode = 'home' | 'settings';
-type ToolId = 'process-killer' | 'signature-fix' | 'network-repair';
+type ToolId = 'process-killer' | 'signature-fix' | 'network-repair' | 'node-modules-map';
 type AccentPreset = 'iceblue' | 'emerald' | 'sunset' | 'violet';
 type ScanHistoryStatus = 'occupied' | 'clear';
 
@@ -78,6 +80,11 @@ const initialNetworkBanner: BannerState = {
   text: '网络修复动作会弹出系统管理员授权窗口。你可以按顺序尝试清 DNS、更新 DHCP、重启 Wi‑Fi，最后再考虑深度重置。',
 };
 
+const initialNodeModulesBanner: BannerState = {
+  tone: 'neutral',
+  text: '选择一个项目目录、工作区目录或整个主目录，工具会扫描其中的 node_modules，并按体积输出可视化占用图。',
+};
+
 const DEFAULT_PREFERENCES: AppPreferences = {
   themeMode: 'dark',
   accentPreset: 'iceblue',
@@ -115,6 +122,14 @@ const TOOL_OPTIONS: ToolMeta[] = [
       'sudo dscacheutil -flushcache; sudo killall -HUP mDNSResponder',
       'sudo ipconfig set en0 DHCP',
     ].join('\n'),
+  },
+  {
+    id: 'node-modules-map',
+    label: 'node_modules 占用图',
+    kicker: '空间分析',
+    summary: '扫描指定目录里的 node_modules，统计可释放空间，并按体积画出占用图。',
+    description: '适合快速找出哪些项目或缓存目录里的 node_modules 最占空间，思路类似 npkill，但更偏桌面端可视化查看。',
+    command: 'npx npkill',
   },
 ];
 
@@ -301,6 +316,36 @@ function getActionButtonClassName(tone: NetworkActionMeta['tone']): string {
   return tone === 'primary' ? 'primary-button' : 'ghost-button';
 }
 
+function formatBytes(sizeBytes: number): string {
+  if (!Number.isFinite(sizeBytes) || sizeBytes <= 0) {
+    return '0 B';
+  }
+
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  let value = sizeBytes;
+  let unitIndex = 0;
+
+  while (value >= 1024 && unitIndex < units.length - 1) {
+    value /= 1024;
+    unitIndex += 1;
+  }
+
+  const precision = value >= 100 || unitIndex === 0 ? 0 : value >= 10 ? 1 : 2;
+  return `${value.toFixed(precision)} ${units[unitIndex]}`;
+}
+
+function formatDuration(elapsedMs: number): string {
+  if (elapsedMs < 1000) {
+    return `${elapsedMs} ms`;
+  }
+
+  if (elapsedMs < 10_000) {
+    return `${(elapsedMs / 1000).toFixed(1)} s`;
+  }
+
+  return `${Math.round(elapsedMs / 1000)} s`;
+}
+
 function App() {
   const [activeView, setActiveView] = useState<ViewMode>('home');
   const [activeTool, setActiveTool] = useState<ToolId | null>(null);
@@ -311,15 +356,23 @@ function App() {
   const [processBanner, setProcessBanner] = useState<BannerState>(initialProcessBanner);
   const [repairBanner, setRepairBanner] = useState<BannerState>(initialRepairBanner);
   const [networkBanner, setNetworkBanner] = useState<BannerState>(initialNetworkBanner);
+  const [nodeModulesBanner, setNodeModulesBanner] = useState<BannerState>(initialNodeModulesBanner);
   const [repairPath, setRepairPath] = useState('');
   const [networkInterfaceName, setNetworkInterfaceName] = useState('en0');
   const [wifiServiceName, setWifiServiceName] = useState('Wi-Fi');
+  const [scanRootPath, setScanRootPath] = useState('~/Documents');
   const [lastRepairResult, setLastRepairResult] = useState<RepairAppSignatureResult | null>(null);
   const [lastNetworkResult, setLastNetworkResult] = useState<NetworkActionResult | null>(null);
+  const [nodeModulesResult, setNodeModulesResult] = useState<NodeModulesUsageResult | null>(null);
+  const [pendingDeletePath, setPendingDeletePath] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [killingPid, setKillingPid] = useState<number | null>(null);
   const [isSelectingApplication, setIsSelectingApplication] = useState(false);
+  const [isSelectingDirectory, setIsSelectingDirectory] = useState(false);
   const [isRepairingSignature, setIsRepairingSignature] = useState(false);
+  const [isScanningNodeModules, setIsScanningNodeModules] = useState(false);
+  const [openingFinderPath, setOpeningFinderPath] = useState<string | null>(null);
+  const [deletingNodeModulesPath, setDeletingNodeModulesPath] = useState<string | null>(null);
   const [runningNetworkAction, setRunningNetworkAction] = useState<NetworkAction | null>(null);
 
   useEffect(() => {
@@ -561,6 +614,190 @@ function App() {
     }
   }
 
+  async function handleSelectScanDirectory() {
+    if (!window.processQuery) {
+      setNodeModulesBanner({
+        tone: 'error',
+        text: '没有检测到桌面桥接能力，请确认当前环境通过 Electron 启动。',
+      });
+      return;
+    }
+
+    setIsSelectingDirectory(true);
+
+    try {
+      const selectedPath = await window.processQuery.selectDirectoryPath();
+
+      if (!selectedPath) {
+        setNodeModulesBanner({
+          tone: 'neutral',
+          text: '已取消目录选择，你也可以直接手动输入扫描路径。',
+        });
+        return;
+      }
+
+      setScanRootPath(selectedPath);
+      setNodeModulesBanner({
+        tone: 'success',
+        text: `已选择扫描目录：${selectedPath}`,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '打开目录选择器失败，请稍后重试。';
+      setNodeModulesBanner({
+        tone: 'error',
+        text: message,
+      });
+    } finally {
+      setIsSelectingDirectory(false);
+    }
+  }
+
+  async function scanNodeModules(rootPathValue?: string) {
+    if (!window.processQuery) {
+      setNodeModulesBanner({
+        tone: 'error',
+        text: '没有检测到桌面桥接能力，请确认当前环境通过 Electron 启动。',
+      });
+      return;
+    }
+
+    const targetPath = (rootPathValue ?? scanRootPath).trim();
+
+    if (!targetPath) {
+      setNodeModulesBanner({
+        tone: 'error',
+        text: '请先输入一个目录路径，或者用“选择目录”来指定扫描范围。',
+      });
+      return;
+    }
+
+    setIsScanningNodeModules(true);
+    setPendingDeletePath(null);
+    setNodeModulesBanner({
+      tone: 'neutral',
+      text: `正在扫描 ${targetPath} 下的 node_modules，占用目录较多时可能需要等待几秒...`,
+    });
+
+    try {
+      const nextResult = await window.processQuery.scanNodeModulesUsage({
+        rootPath: targetPath,
+        limit: 120,
+      });
+
+      setScanRootPath(nextResult.rootPath);
+      startTransition(() => {
+        setNodeModulesResult(nextResult);
+      });
+
+      if (nextResult.totalMatches > 0) {
+        setNodeModulesBanner({
+          tone: 'success',
+          text: `扫描完成：共找到 ${nextResult.totalMatches} 个 node_modules，预计可释放 ${formatBytes(
+            nextResult.totalSizeBytes,
+          )}。`,
+        });
+      } else {
+        setNodeModulesBanner({
+          tone: 'neutral',
+          text: `扫描完成：在 ${nextResult.rootPath} 下没有发现 node_modules 目录。`,
+        });
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '扫描失败，请稍后重试。';
+      setNodeModulesBanner({
+        tone: 'error',
+        text: message,
+      });
+    } finally {
+      setIsScanningNodeModules(false);
+    }
+  }
+
+  async function handleNodeModulesSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    await scanNodeModules();
+  }
+
+  async function handleDeleteNodeModules(entry: NodeModulesUsageEntry) {
+    if (!window.processQuery) {
+      setNodeModulesBanner({
+        tone: 'error',
+        text: '没有检测到桌面桥接能力，请确认当前环境通过 Electron 启动。',
+      });
+      return;
+    }
+
+    setDeletingNodeModulesPath(entry.path);
+    setNodeModulesBanner({
+      tone: 'neutral',
+      text: `正在删除 ${entry.relativePath}，目录较大时可能需要等待一会儿...`,
+    });
+
+    try {
+      await window.processQuery.deleteNodeModulesDirectory(entry.path);
+
+      startTransition(() => {
+        setNodeModulesResult((current) => {
+          if (!current) {
+            return current;
+          }
+
+          const nextEntries = current.entries.filter((item) => item.path !== entry.path);
+
+          return {
+            ...current,
+            scannedAt: new Date().toISOString(),
+            totalMatches: Math.max(0, current.totalMatches - 1),
+            totalSizeBytes: Math.max(0, current.totalSizeBytes - entry.sizeBytes),
+            entries: nextEntries,
+          };
+        });
+      });
+
+      setPendingDeletePath(null);
+      setNodeModulesBanner({
+        tone: 'success',
+        text: `已删除 ${entry.relativePath}，释放空间约 ${formatBytes(entry.sizeBytes)}。如果你还想把隐藏结果补齐，可以再重新扫描一次。`,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '删除失败，请稍后重试。';
+      setNodeModulesBanner({
+        tone: 'error',
+        text: message,
+      });
+    } finally {
+      setDeletingNodeModulesPath(null);
+    }
+  }
+
+  async function handleOpenInFinder(entry: NodeModulesUsageEntry) {
+    if (!window.processQuery) {
+      setNodeModulesBanner({
+        tone: 'error',
+        text: '没有检测到桌面桥接能力，请确认当前环境通过 Electron 启动。',
+      });
+      return;
+    }
+
+    setOpeningFinderPath(entry.path);
+
+    try {
+      await window.processQuery.openInFinder(entry.path);
+      setNodeModulesBanner({
+        tone: 'success',
+        text: `已在访达中打开 ${entry.relativePath}。`,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '打开访达失败，请稍后重试。';
+      setNodeModulesBanner({
+        tone: 'error',
+        text: message,
+      });
+    } finally {
+      setOpeningFinderPath(null);
+    }
+  }
+
   async function handleRunNetworkAction(action: NetworkAction) {
     if (!window.processQuery) {
       setNetworkBanner({
@@ -664,9 +901,21 @@ function App() {
   const lastNetworkTime = lastNetworkResult?.executedAt
     ? formatTime(lastNetworkResult.executedAt)
     : '尚未执行';
+  const lastNodeModulesScanTime = nodeModulesResult?.scannedAt
+    ? formatTime(nodeModulesResult.scannedAt)
+    : '尚未扫描';
   const lastNetworkActionMeta = lastNetworkResult
     ? getNetworkActionMeta(lastNetworkResult.action)
     : null;
+  const nodeModulesEntryCount = nodeModulesResult?.entries.length ?? 0;
+  const nodeModulesTotalMatches = nodeModulesResult?.totalMatches ?? 0;
+  const nodeModulesTotalSize = nodeModulesResult
+    ? formatBytes(nodeModulesResult.totalSizeBytes)
+    : '0 B';
+  const nodeModulesElapsed = nodeModulesResult
+    ? formatDuration(nodeModulesResult.elapsedMs)
+    : '尚未扫描';
+  const largestNodeModulesSize = nodeModulesResult?.entries[0]?.sizeBytes ?? 0;
   const cachedPreview = scanHistory.slice(0, 3);
   const emptyTitle = hasSearched ? `端口 ${result?.port} 当前没有监听进程` : '等待新的扫描指令';
   const emptyText = hasSearched
@@ -696,6 +945,16 @@ function App() {
       ? `${lastNetworkResult.summary} 这次操作属于深度重置，执行完成后请立即重启 Mac。`
       : lastNetworkResult.summary
     : '这里把清 DNS、更新 DHCP、重启 Wi‑Fi 和深度重置网络收在一起。建议按从轻到重的顺序尝试，只有最后一项会删除系统网络配置文件。';
+  const nodeModulesResultTitle = nodeModulesResult
+    ? nodeModulesTotalMatches > 0
+      ? `已发现 ${nodeModulesTotalMatches} 个 node_modules`
+      : '当前扫描范围没有 node_modules'
+    : '准备开始扫描 node_modules';
+  const nodeModulesResultText = nodeModulesResult
+    ? nodeModulesTotalMatches > 0
+      ? `本次扫描目录是 ${nodeModulesResult.rootPath}，共识别 ${nodeModulesTotalMatches} 个 node_modules，预计可释放 ${nodeModulesTotalSize}，扫描耗时 ${nodeModulesElapsed}。`
+      : `已经扫描 ${nodeModulesResult.rootPath}，但暂时没有发现 node_modules 目录。`
+    : '这个工具会像 npkill 一样扫描指定目录里的 node_modules，只不过把结果改成桌面端可视化列表，更适合先看再决定要不要清理。';
 
   const heroEyebrow =
     activeView === 'settings'
@@ -728,12 +987,14 @@ function App() {
       ? '你可以手动控制浅色或深色，也可以决定整个工具集的主色风格。设置会保存在当前设备，下次打开自动恢复。'
       : selectedToolMeta
         ? selectedToolMeta.description
-        : '现在内置进程查杀、签名损坏修复和网络修复三项工具。查端口、清隔离属性、做网络恢复，都可以在同一个界面里直接完成。';
+        : '现在内置进程查杀、签名损坏修复、网络修复和 node_modules 占用图四项工具。查端口、清隔离属性、做网络恢复、找磁盘大户，都可以在同一个界面里直接完成。';
   const visualTitle =
     activeView === 'settings'
       ? '当前外观预览'
       : activeTool === 'network-repair'
         ? '网络恢复面板'
+      : activeTool === 'node-modules-map'
+        ? 'node_modules 空间雷达'
       : activeTool === 'signature-fix'
         ? '隔离属性修复'
         : activeTool === 'process-killer'
@@ -744,6 +1005,8 @@ function App() {
       ? '立刻预览当前主题和配色，不需要重启应用。'
       : activeTool === 'network-repair'
         ? '把 DNS、DHCP、Wi‑Fi 和深度重置整合到一个入口里。'
+      : activeTool === 'node-modules-map'
+        ? '按体积排序列出 node_modules，用可释放空间视角快速找出大户。'
       : activeTool === 'signature-fix'
         ? '让下载后的应用尽快回到可打开状态。'
         : activeTool === 'process-killer'
@@ -763,6 +1026,12 @@ function App() {
             { label: '监听进程', value: `${processCount} 个` },
             { label: '缓存记录', value: `${scanHistory.length} 条` },
           ]
+        : activeTool === 'node-modules-map'
+          ? [
+              { label: '最近扫描', value: lastNodeModulesScanTime },
+              { label: '可释放空间', value: nodeModulesTotalSize },
+              { label: '命中目录', value: `${nodeModulesTotalMatches} 个` },
+            ]
         : activeTool === 'network-repair'
           ? [
               { label: '最近执行', value: lastNetworkTime },
@@ -894,6 +1163,10 @@ function App() {
                       ? lastRepairResult
                         ? `最近一次修复目标是 ${extractFileName(lastRepairResult.path)}，执行时间 ${lastRepairTime}。`
                         : '还没有执行过签名修复，适合处理刚下载应用的“已损坏”提示。'
+                      : tool.id === 'node-modules-map'
+                        ? nodeModulesResult
+                          ? `上次扫描共找到 ${nodeModulesTotalMatches} 个 node_modules，可释放 ${nodeModulesTotalSize}。`
+                          : '适合快速找出项目、缓存和扩展目录里最占空间的 node_modules。'
                       : lastNetworkResult
                         ? `最近执行的是“${lastNetworkActionMeta?.label ?? '网络修复'}”，完成时间 ${lastNetworkTime}。`
                         : '网络异常时可以先清 DNS，再逐步尝试 DHCP、Wi‑Fi 和深度重置。'}
@@ -1104,6 +1377,213 @@ function App() {
                   <code>kill -9 &lt;PID&gt;</code>
                 </div>
               </div>
+            </section>
+          </section>
+        ) : null}
+
+        {activeView === 'home' && activeTool === 'node-modules-map' ? (
+          <section className="workspace workspace-node-modules">
+            <section className="panel card">
+              <div className="panel-heading">
+                <div className="section-topline">
+                  <span className="section-label">node_modules 占用图</span>
+                  <button className="ghost-button" type="button" onClick={() => setActiveTool(null)}>
+                    返回首页
+                  </button>
+                </div>
+                <h2>选目录，开始扫描</h2>
+                <p>思路参考 `npkill`，但这里不直接删目录，而是先按体积把 node_modules 排出来，让你先看清楚谁最占空间。</p>
+              </div>
+
+              <form className="search-form" onSubmit={handleNodeModulesSubmit}>
+                <label className="field">
+                  <span>扫描目录</span>
+                  <input
+                    type="text"
+                    placeholder="例如 ~/Documents /Users/you/workspace"
+                    value={scanRootPath}
+                    onChange={(event) => setScanRootPath(event.target.value)}
+                  />
+                </label>
+
+                <div className="tool-button-row">
+                  <button
+                    className="ghost-button"
+                    type="button"
+                    disabled={isSelectingDirectory}
+                    onClick={() => void handleSelectScanDirectory()}
+                  >
+                    {isSelectingDirectory ? '打开中...' : '选择目录'}
+                  </button>
+                  <button className="primary-button" type="submit" disabled={isScanningNodeModules}>
+                    {isScanningNodeModules ? '扫描中...' : '开始扫描'}
+                  </button>
+                </div>
+              </form>
+
+              <div className={`banner banner-${nodeModulesBanner.tone}`}>{nodeModulesBanner.text}</div>
+
+              <div className="command-hints">
+                <div className="hint-card">
+                  <span>参考命令</span>
+                  <code>npx npkill</code>
+                </div>
+                <div className="hint-card">
+                  <span>扫描目标</span>
+                  <code>递归查找所选目录下的 node_modules</code>
+                </div>
+                <div className="hint-card">
+                  <span>结果用途</span>
+                  <code>按体积排序生成占用图，优先找出可释放空间</code>
+                </div>
+              </div>
+            </section>
+
+            <section className="results">
+              <div className="results-head">
+                <span className="section-label">{nodeModulesResult ? '扫描结果' : '工具说明'}</span>
+                <h2>{nodeModulesResultTitle}</h2>
+                <p>{nodeModulesResultText}</p>
+              </div>
+
+              {nodeModulesResult && nodeModulesTotalMatches > 0 ? (
+                <>
+                  <div className="results-grid node-summary-grid">
+                    <article className="summary-card card">
+                      <span>可释放空间</span>
+                      <strong>{nodeModulesTotalSize}</strong>
+                      <small>扫描目录内全部 node_modules 的体积总和</small>
+                    </article>
+                    <article className="summary-card card">
+                      <span>命中目录</span>
+                      <strong>{nodeModulesTotalMatches} 个</strong>
+                      <small>
+                        当前界面展示 {nodeModulesEntryCount} 个，按体积从大到小排序
+                      </small>
+                    </article>
+                    <article className="summary-card card">
+                      <span>扫描耗时</span>
+                      <strong>{nodeModulesElapsed}</strong>
+                      <small>最近完成时间 {lastNodeModulesScanTime}</small>
+                    </article>
+                  </div>
+
+                  <section className="detail-card detail-card-wide card">
+                    <div className="detail-head">
+                      <div className="detail-heading">
+                        <span className="section-label">占用图</span>
+                        <h3>按体积排序的 node_modules 列表</h3>
+                        <p>横条长度以当前最大目录为基准，便于你快速识别最值得优先清理的空间大户。</p>
+                      </div>
+                      <div className="detail-summary">
+                        <strong>{nodeModulesTotalSize}</strong>
+                        <span>扫描根目录 {nodeModulesResult.rootPath}</span>
+                      </div>
+                    </div>
+
+                    <div className="usage-map">
+                      {nodeModulesResult.entries.map((entry) => {
+                        const width =
+                          largestNodeModulesSize > 0
+                            ? Math.max(6, (entry.sizeBytes / largestNodeModulesSize) * 100)
+                            : 0;
+                        const isPendingDelete = pendingDeletePath === entry.path;
+                        const isDeleting = deletingNodeModulesPath === entry.path;
+                        const isOpeningInFinder = openingFinderPath === entry.path;
+
+                        return (
+                          <article className="usage-row" key={entry.path}>
+                            <div className="usage-row-head">
+                              <div className="usage-row-copy">
+                                <strong>{entry.relativePath}</strong>
+                                <span title={entry.path}>{entry.path}</span>
+                              </div>
+                              <div className="usage-row-head-end">
+                                <strong className="usage-size">{formatBytes(entry.sizeBytes)}</strong>
+                                {isPendingDelete ? (
+                                  <div className="usage-actions">
+                                    <span className="usage-confirm-text">确认删除这个 node_modules？</span>
+                                    <button
+                                      className="ghost-button usage-open-button"
+                                      type="button"
+                                      disabled={isDeleting || isOpeningInFinder}
+                                      onClick={() => void handleOpenInFinder(entry)}
+                                    >
+                                      {isOpeningInFinder ? '打开中...' : '打开访达'}
+                                    </button>
+                                    <button
+                                      className="ghost-button"
+                                      type="button"
+                                      disabled={isDeleting}
+                                      onClick={() => setPendingDeletePath(null)}
+                                    >
+                                      取消
+                                    </button>
+                                    <button
+                                      className="danger-button usage-delete-button"
+                                      type="button"
+                                      disabled={isDeleting}
+                                      onClick={() => void handleDeleteNodeModules(entry)}
+                                    >
+                                      {isDeleting ? '删除中...' : '确认删除'}
+                                    </button>
+                                  </div>
+                                ) : (
+                                  <div className="usage-actions">
+                                    <button
+                                      className="ghost-button usage-open-button"
+                                      type="button"
+                                      disabled={isDeleting || isOpeningInFinder}
+                                      onClick={() => void handleOpenInFinder(entry)}
+                                    >
+                                      {isOpeningInFinder ? '打开中...' : '打开访达'}
+                                    </button>
+                                    <button
+                                      className="danger-button usage-delete-button"
+                                      type="button"
+                                      disabled={
+                                        isScanningNodeModules ||
+                                        deletingNodeModulesPath !== null ||
+                                        isOpeningInFinder
+                                      }
+                                      onClick={() => setPendingDeletePath(entry.path)}
+                                    >
+                                      删除
+                                    </button>
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+
+                            <div className="usage-bar-track" aria-hidden="true">
+                              <span className="usage-bar-fill" style={{ width: `${width}%` }} />
+                            </div>
+
+                            <div className="usage-row-meta">
+                              <span>最后修改：{formatTime(entry.lastModifiedAt)}</span>
+                            </div>
+                          </article>
+                        );
+                      })}
+                    </div>
+
+                    {nodeModulesTotalMatches > nodeModulesEntryCount ? (
+                      <div className="banner banner-neutral">
+                        结果过多时，当前界面会先展示体积最大的 {nodeModulesEntryCount} 个 node_modules，避免列表过长影响查看。
+                      </div>
+                    ) : null}
+                  </section>
+                </>
+              ) : (
+                <section className="empty-state card">
+                  <div className="empty-mark">
+                    <img src={brandMark} alt="" />
+                  </div>
+                  <span className="empty-eyebrow">NPKILL</span>
+                  <h2>先选一个目录试试看</h2>
+                  <p>推荐先从你的开发工作区或 `~/Documents` 开始扫描。如果你想像 `npkill` 一样把缓存目录也一起纳入统计，可以把扫描根目录改成 `~`。</p>
+                </section>
+              )}
             </section>
           </section>
         ) : null}

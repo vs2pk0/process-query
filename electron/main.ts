@@ -2,8 +2,21 @@ import { app, BrowserWindow, ipcMain, nativeImage } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
 
-import type { KillSignal, NetworkAction, RunNetworkActionOptions, ThemeMode } from '../shared/process';
-import { repairAppSignature, runNetworkAction, selectApplicationPath } from './mac-utility-service';
+import type {
+  KillSignal,
+  NetworkAction,
+  RunNetworkActionOptions,
+  ScanNodeModulesOptions,
+  ThemeMode,
+} from '../shared/process';
+import {
+  openInFinder,
+  repairAppSignature,
+  runNetworkAction,
+  selectApplicationPath,
+  selectDirectoryPath,
+} from './mac-utility-service';
+import { deleteNodeModulesDirectory, scanNodeModulesUsage } from './node-modules-service';
 import { findProcessesByPort, killProcessByPid } from './process-service';
 
 const isMac = process.platform === 'darwin';
@@ -78,6 +91,15 @@ app.whenReady().then(() => {
 
     return selectApplicationPath(window);
   });
+  ipcMain.handle('tools:select-directory', async (event) => {
+    const window = BrowserWindow.fromWebContents(event.sender);
+
+    if (!window) {
+      throw new Error('当前没有可用窗口，无法打开目录选择器。');
+    }
+
+    return selectDirectoryPath(window);
+  });
   ipcMain.handle('tools:repair-app-signature', async (_event, targetPath: string) =>
     repairAppSignature(targetPath),
   );
@@ -85,6 +107,15 @@ app.whenReady().then(() => {
     'tools:run-network-action',
     async (_event, action: NetworkAction, options?: RunNetworkActionOptions) =>
       runNetworkAction(action, options),
+  );
+  ipcMain.handle('tools:scan-node-modules', async (_event, options: ScanNodeModulesOptions) =>
+    scanNodeModulesUsage(options),
+  );
+  ipcMain.handle('tools:open-in-finder', async (_event, targetPath: string) =>
+    openInFinder(targetPath),
+  );
+  ipcMain.handle('tools:delete-node-modules', async (_event, targetPath: string) =>
+    deleteNodeModulesDirectory(targetPath),
   );
   ipcMain.handle('window:set-theme', async (event, themeMode: ThemeMode) => {
     const window = BrowserWindow.fromWebContents(event.sender);

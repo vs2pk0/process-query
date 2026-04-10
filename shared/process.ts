@@ -4,6 +4,39 @@ export type KillSignal = 'SIGTERM' | 'SIGKILL';
 export type ThemeMode = 'light' | 'dark';
 export type NetworkAction = 'flushDns' | 'renewDhcp' | 'restartWifi' | 'deepResetNetwork';
 
+export interface NodeModulesUsageEntry {
+  path: string;
+  relativePath: string;
+  sizeBytes: number;
+  lastModifiedAt: string;
+}
+
+export interface ScanNodeModulesOptions {
+  rootPath: string;
+  limit?: number;
+}
+
+export interface NodeModulesUsageResult {
+  rootPath: string;
+  scannedAt: string;
+  elapsedMs: number;
+  totalSizeBytes: number;
+  totalMatches: number;
+  entries: NodeModulesUsageEntry[];
+}
+
+export interface DeleteNodeModulesResult {
+  path: string;
+  success: boolean;
+  deletedAt: string;
+}
+
+export interface OpenFinderResult {
+  path: string;
+  success: boolean;
+  openedAt: string;
+}
+
 export interface PortProcess {
   pid: number;
   command: string;
@@ -66,11 +99,21 @@ export interface ProcessToolApi {
   lookupPort: (port: number) => Promise<LookupPortResult>;
   killProcess: (pid: number, signal?: KillSignal) => Promise<KillProcessResult>;
   selectApplicationPath: () => Promise<string | null>;
+  selectDirectoryPath: () => Promise<string | null>;
   repairAppSignature: (targetPath: string) => Promise<RepairAppSignatureResult>;
   runNetworkAction: (
     action: NetworkAction,
     options?: RunNetworkActionOptions,
   ) => Promise<NetworkActionResult>;
+  scanNodeModulesUsage: (
+    options: ScanNodeModulesOptions,
+  ) => Promise<NodeModulesUsageResult>;
+  openInFinder: (
+    targetPath: string,
+  ) => Promise<OpenFinderResult>;
+  deleteNodeModulesDirectory: (
+    targetPath: string,
+  ) => Promise<DeleteNodeModulesResult>;
   setWindowTheme: (themeMode: ThemeMode) => Promise<void>;
 }
 

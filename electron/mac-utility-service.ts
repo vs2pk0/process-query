@@ -5,11 +5,12 @@ import path from 'node:path';
 import { promisify } from 'node:util';
 
 import type { BrowserWindow } from 'electron';
-import { dialog } from 'electron';
+import { dialog, shell } from 'electron';
 
 import type {
   NetworkAction,
   NetworkActionResult,
+  OpenFinderResult,
   RepairAppSignatureResult,
   RunNetworkActionOptions,
 } from '../shared/process';
@@ -104,6 +105,35 @@ export async function selectApplicationPath(window: BrowserWindow): Promise<stri
   }
 
   return result.filePaths[0] ?? null;
+}
+
+export async function selectDirectoryPath(window: BrowserWindow): Promise<string | null> {
+  const result = await dialog.showOpenDialog(window, {
+    title: '选择要扫描的目录',
+    buttonLabel: '选择目录',
+    properties: ['openDirectory'],
+  });
+
+  if (result.canceled) {
+    return null;
+  }
+
+  return result.filePaths[0] ?? null;
+}
+
+export async function openInFinder(targetPath: string): Promise<OpenFinderResult> {
+  const normalizedPath = normalizeTargetPath(targetPath);
+  const errorMessage = await shell.openPath(normalizedPath);
+
+  if (errorMessage) {
+    throw new Error(errorMessage);
+  }
+
+  return {
+    path: normalizedPath,
+    success: true,
+    openedAt: new Date().toISOString(),
+  };
 }
 
 export async function repairAppSignature(targetPath: string): Promise<RepairAppSignatureResult> {
